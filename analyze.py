@@ -1,12 +1,11 @@
-# pip install spacy
-# pip install vaderSentiment
-# pip install pandas
-# python -m spacy download en_core_web_sm
+# pip install spacy pandas vaderSentiment
+# python3 -m spacy download en_core_web_sm
 
 import spacy
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import csv
-import os
+import pandas as pd
+import json
+import re
 
 try:
     nlp = spacy.load("en_core_web_sm")
@@ -17,102 +16,154 @@ except OSError:
 
 analyzer = SentimentIntensityAnalyzer()
 
-# passing a single review to this
-# outputs the dict [aspect, sentiment]
-def aspect_based_sentiment_analysis(review_text):
-    doc = nlp(review_text)
+def extract_aspects(doc):
     results = []
-    
-    # Using nouns as aspects
-    aspects = [chunk.text.lower() for chunk in doc.noun_chunks]
-    
-    unique_aspects = list(set(aspects))
+    # Use a set to keep track of aspects we've already found and scored in a sentence
+    # to avoid duplicate entries for the same core idea.
+    processed_sentences = {}
 
-    if not unique_aspects:
-        unique_aspects = [token.text.lower() for token in doc if token.pos_ == "NOUN"]
-        if not unique_aspects:
-             return []
+    # --- NEW: PATTERN 3 for handling negation directly ---
+    for token in doc:
+        if token.dep_ == 'neg': # Found a negation word (e.g., "not")
+            verb = token.head
+            # Find the subject (aspect) and description (opinion) linked to the verb
+            aspect = None
+            opinion = None
+            for child in verb.children:
+                if child.dep_ in ('nsubj', 'nsubjpass'): # nominal subject
+                    aspect = child.text.lower()
+                elif child.dep_ == 'acomp': # adjectival complement
+                    opinion = child.text.lower()
+            
+            if aspect and opinion and verb.sent not in processed_sentences:
+                sentence = verb.sent.text
+                vs = analyzer.polarity_scores(sentence)
+                sentiment = get_sentiment_label(vs['compound'])
+                results.append({
+                    "aspect": aspect, 
+                    "opinion": opinion, # The word itself
+                    "context": sentence, # The full context analyzed
+                    "sentiment": sentiment, 
+                    "score": vs['compound']
+                })
+                processed_sentences[verb.sent] = True
 
-    for aspect in unique_aspects:
-        sentiment_scores = []
-        
-        # Find sentences containing the aspect
-        for sent in doc.sents:
-            if aspect in sent.text.lower():
-                # Get the sentiment of the sentence
-                vs = analyzer.polarity_scores(sent.text)
-                sentiment_scores.append(vs['compound'])
+    for token in doc:
+        # If we've already processed this sentence via the negation rule, skip it
+        if token.sent in processed_sentences:
+            continue
 
-        if sentiment_scores:
-            avg_score = sum(sentiment_scores) / len(sentiment_scores)
+        # PATTERN 1: Adjective directly modifying a noun (e.g., "good money")
+        if token.dep_ == 'amod' and token.head.pos_ == 'NOUN':
+            aspect = token.head.text.lower()
+            opinion = token.text.lower()
+            
+            # THE FIX: Analyze the entire sentence for context
+            sentence = token.sent.text
+            vs = analyzer.polarity_scores(sentence)
+            sentiment = get_sentiment_label(vs['compound'])
+            results.append({
+                "aspect": aspect, 
+                "opinion": opinion, 
+                "context": sentence,
+                "sentiment": sentiment, 
+                "score": vs['compound']
+            })
+            processed_sentences[token.sent] = True
 
-            if avg_score >= 0.05:
-                sentiment = "Positive"
-            elif avg_score <= -0.05:
-                sentiment = "Negative"
-            else:
-                sentiment = "Neutral"
 
-            results.append({"aspect": aspect, "sentiment": sentiment, "score": round(avg_score, 2)})
+        # PATTERN 2: Noun as subject of a descriptive verb (e.g., "show was terrible")
+        elif token.dep_ == 'nsubj' and token.head.pos_ in ['VERB', 'AUX']:
+            for child in token.head.children:
+                if child.dep_ == 'acomp':
+                    aspect = token.text.lower()
+                    opinion = child.text.lower()
+                    
+                    # THE FIX: Analyze the entire sentence for context
+                    sentence = token.sent.text
+                    vs = analyzer.polarity_scores(sentence)
+                    sentiment = get_sentiment_label(vs['compound'])
+                    results.append({
+                        "aspect": aspect, 
+                        "opinion": opinion, 
+                        "context": sentence,
+                        "sentiment": sentiment, 
+                        "score": vs['compound']
+                    })
+                    processed_sentences[token.sent] = True
 
-    return results
+    # Fallback to noun chunks if no specific patterns are found
+    if not results:
+        for chunk in doc.noun_chunks:
+            if chunk.root.pos_ != 'PRON':
+                vs = analyzer.polarity_scores(chunk.sent.text)
+                # Only add if the sentiment is not neutral
+                if vs['compound'] != 0:
+                    sentiment = get_sentiment_label(vs['compound'])
+                    results.append({
+                        "aspect": chunk.text.lower(), 
+                        "opinion": "N/A",
+                        "context": chunk.sent.text,
+                        "sentiment": sentiment, 
+                        "score": vs['compound']
+                    })
 
-# reads from the input csv
-# writes to output csv
-# for each review calls aspect_based_sentiment_analysis(review_text)
-def process_dataset(input_csv_path, output_csv_path):
-    review_column_name = 'review'
+    # A final step to remove duplicates that might have slipped through
+    final_results = [dict(t) for t in {tuple(d.items()) for d in results}]
+    return final_results
+
+def get_sentiment_label(score):
+    if score >= 0.05:
+        return "Positive"
+    elif score <= -0.05:
+        return "Negative"
+    else:
+        return "Neutral"
+
+def clean_text(text):
+    text = re.sub(r'([.!?])([A-Za-z])', r'\1 \2', text)
+    return text
+
+def process_dataset(input_csv_path, output_csv_path, review_column_name='review', batch_size=500):
     print(f"Starting dataset processing from '{input_csv_path}'...")
     try:
-        with open(input_csv_path, mode='r', encoding='utf-8') as infile, \
-             open(output_csv_path, mode='w', encoding='utf-8', newline='') as outfile:
+        chunk_iterator = pd.read_csv(input_csv_path, chunksize=batch_size, on_bad_lines='skip')
+        
+        is_first_batch = True
+        
+        for i, chunk in enumerate(chunk_iterator):
+            print(f"Processing batch {i+1}...")
             
-            reader = csv.DictReader(infile)
-            
-            # Verify the review column exists
-            if review_column_name not in reader.fieldnames:
-                print(f"Error: Column '{review_column_name}' not found in '{input_csv_path}'.")
-                print(f"Available columns: {', '.join(reader.fieldnames)}")
+            if review_column_name not in chunk.columns:
+                print(f"Error: Column '{review_column_name}' not found.")
                 return
 
-            # Prepare the output file with headers
-            # It will include all original columns plus the analysis columns
-            output_headers = reader.fieldnames + ['aspect', 'sentiment', 'score']
-            writer = csv.DictWriter(outfile, fieldnames=output_headers)
-            writer.writeheader()
+            reviews = chunk[review_column_name].fillna('').astype(str)
+            
+            # Clean the text before processing
+            cleaned_reviews = [clean_text(review) for review in reviews]
+            
+            docs = nlp.pipe(cleaned_reviews)
+            
+            analysis_results = [json.dumps(extract_aspects(doc)) for doc in docs]
+            
+            chunk['aspect_sentiments'] = analysis_results
+            
+            if is_first_batch:
+                chunk.to_csv(output_csv_path, index=False, mode='w')
+                is_first_batch = False
+            else:
+                chunk.to_csv(output_csv_path, index=False, mode='a', header=False)
 
-            for row in reader:
-                review_text = row.get(review_column_name, "")
-                
-                if not review_text or not review_text.strip():
-                    continue
-
-                analysis_results = aspect_based_sentiment_analysis(review_text)
-
-                if analysis_results:
-                    for result in analysis_results:
-                        new_row = row.copy()
-                        new_row['aspect'] = result['aspect']
-                        new_row['sentiment'] = result['sentiment']
-                        new_row['score'] = result['score']
-                        writer.writerow(new_row)
-                else:
-                    new_row = row.copy()
-                    new_row['aspect'] = 'N/A'
-                    new_row['sentiment'] = 'N/A'
-                    new_row['score'] = 0.0
-                    writer.writerow(new_row)
-        
-        print(f"✔ Processing complete. Results saved to '{output_csv_path}'.")
+        print(f"Processing complete. Results saved to '{output_csv_path}'.")
 
     except FileNotFoundError:
         print(f"Error: The file '{input_csv_path}' was not found.")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
 
-
 if __name__ == "__main__":
     input_file = "TestReviews.csv"
-    output_file = "results.csv"
+    output_file = "results.csv" 
 
-    process_dataset(input_file, output_file)
+    process_dataset(input_file, output_file, review_column_name='review')
