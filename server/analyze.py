@@ -22,11 +22,9 @@ def extract_aspects(doc):
     # to avoid duplicate entries for the same core idea.
     processed_sentences = {}
 
-    # --- NEW: PATTERN 3 for handling negation directly ---
     for token in doc:
         if token.dep_ == 'neg': # Found a negation word (e.g., "not")
             verb = token.head
-            # Find the subject (aspect) and description (opinion) linked to the verb
             aspect = None
             opinion = None
             for child in verb.children:
@@ -49,7 +47,6 @@ def extract_aspects(doc):
                 processed_sentences[verb.sent] = True
 
     for token in doc:
-        # If we've already processed this sentence via the negation rule, skip it
         if token.sent in processed_sentences:
             continue
 
@@ -140,7 +137,6 @@ def process_dataset(input_csv_path, output_csv_path, review_column_name='review'
 
             reviews = chunk[review_column_name].fillna('').astype(str)
             
-            # Clean the text before processing
             cleaned_reviews = [clean_text(review) for review in reviews]
             
             docs = nlp.pipe(cleaned_reviews)
@@ -162,8 +158,15 @@ def process_dataset(input_csv_path, output_csv_path, review_column_name='review'
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
 
-if __name__ == "__main__":
-    input_file = "TestReviews.csv"
-    output_file = "results.csv" 
-
-    process_dataset(input_file, output_file, review_column_name='review')
+# analyzes only the single input string
+def process_single(review_text: str):
+    if not isinstance(review_text, str) or not review_text.strip():
+        print("Input must be a non-empty string.")
+        return []
+    
+    cleaned_text = clean_text(review_text)
+    doc = nlp(cleaned_text)
+    
+    results = extract_aspects(doc)
+    
+    return results
