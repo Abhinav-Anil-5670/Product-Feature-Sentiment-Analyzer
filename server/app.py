@@ -1,10 +1,12 @@
 import os
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from datetime import datetime
 from analyze import *
 
 app = Flask(__name__)
+CORS(app, resources={r"/work/*": {"origins": "*"}})
 
 # this is where we store our stuff
 UPLOAD_FOLDER = 'uploads'

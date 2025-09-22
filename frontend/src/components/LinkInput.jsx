@@ -61,14 +61,14 @@ export default function LinkInput() {
         <div className="bg-gray-900/80 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-gray-800 transform transition-all duration-300 hover:scale-[1.02] hover:shadow-3xl">
           {/* Header */}
           <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Link className="w-8 h-8 text-white" />
+            <div className="w-24 h-24 rounded-2xl flex items-center justify-center mx-auto">
+              <img src='./etsy-2.svg' />
             </div>
             <h1 className="text-3xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent mb-2">
-              Submit Link
+              Submit Etsy Link
             </h1>
             <p className="text-gray-400 text-sm">
-              Share your website links with us
+              Share your Etsy product with us
             </p>
           </div>
 
