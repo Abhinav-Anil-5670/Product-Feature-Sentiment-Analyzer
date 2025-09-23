@@ -18,94 +18,87 @@ analyzer = SentimentIntensityAnalyzer()
 
 def extract_aspects(doc):
     results = []
-    # Use a set to keep track of aspects we've already found and scored in a sentence
-    # to avoid duplicate entries for the same core idea.
-    processed_sentences = {}
+    processed_token_indices = set()
 
+    # Iterate through all tokens to find primary patterns
     for token in doc:
-        if token.dep_ == 'neg': # Found a negation word (e.g., "not")
-            verb = token.head
-            aspect = None
-            opinion = None
-            for child in verb.children:
-                if child.dep_ in ('nsubj', 'nsubjpass'): # nominal subject
-                    aspect = child.text.lower()
-                elif child.dep_ == 'acomp': # adjectival complement
-                    opinion = child.text.lower()
-            
-            if aspect and opinion and verb.sent not in processed_sentences:
-                sentence = verb.sent.text
-                vs = analyzer.polarity_scores(sentence)
-                sentiment = get_sentiment_label(vs['compound'])
-                results.append({
-                    "aspect": aspect, 
-                    "opinion": opinion, # The word itself
-                    "context": sentence, # The full context analyzed
-                    "sentiment": sentiment, 
-                    "score": vs['compound']
-                })
-                processed_sentences[verb.sent] = True
-
-    for token in doc:
-        if token.sent in processed_sentences:
+        # Skip if this token has already been part of a found aspect/opinion
+        if token.i in processed_token_indices:
             continue
 
-        # PATTERN 1: Adjective directly modifying a noun (e.g., "good money")
+        # PATTERN 1: Adjective modifying a noun 
         if token.dep_ == 'amod' and token.head.pos_ == 'NOUN':
-            aspect = token.head.text.lower()
-            opinion = token.text.lower()
+            aspect = token.head
+            opinion = token
             
-            # THE FIX: Analyze the entire sentence for context
             sentence = token.sent.text
             vs = analyzer.polarity_scores(sentence)
             sentiment = get_sentiment_label(vs['compound'])
+            
             results.append({
-                "aspect": aspect, 
-                "opinion": opinion, 
+                "aspect": aspect.text.lower(), 
+                "opinion": opinion.text.lower(), 
                 "context": sentence,
                 "sentiment": sentiment, 
                 "score": vs['compound']
             })
-            processed_sentences[token.sent] = True
+            processed_token_indices.add(aspect.i)
+            processed_token_indices.add(opinion.i)
 
-
-        # PATTERN 2: Noun as subject of a descriptive verb (e.g., "show was terrible")
+        # PATTERN 2: Noun as subject of a descriptive verb (e.g., "food was good")
         elif token.dep_ == 'nsubj' and token.head.pos_ in ['VERB', 'AUX']:
+            aspect = token
             for child in token.head.children:
                 if child.dep_ == 'acomp':
-                    aspect = token.text.lower()
-                    opinion = child.text.lower()
-                    
-                    # THE FIX: Analyze the entire sentence for context
+                    opinion = child
                     sentence = token.sent.text
                     vs = analyzer.polarity_scores(sentence)
                     sentiment = get_sentiment_label(vs['compound'])
+                    
                     results.append({
-                        "aspect": aspect, 
-                        "opinion": opinion, 
+                        "aspect": aspect.text.lower(), 
+                        "opinion": opinion.text.lower(), 
                         "context": sentence,
                         "sentiment": sentiment, 
                         "score": vs['compound']
                     })
-                    processed_sentences[token.sent] = True
+                    processed_token_indices.add(aspect.i)
+                    processed_token_indices.add(opinion.i)
+                    
+                    # PATTERN 3: Handling conjunctions for opinions (e.g., "was good and cheap")
+                    for conj in opinion.conjuncts:
+                        if conj.dep_ == 'acomp':
+                            conj_opinion = conj
+                            results.append({
+                                "aspect": aspect.text.lower(),
+                                "opinion": conj_opinion.text.lower(),
+                                "context": sentence,
+                                "sentiment": sentiment,
+                                "score": vs['compound']
+                            })
+                            processed_token_indices.add(conj_opinion.i)
 
-    # Fallback to noun chunks if no specific patterns are found
     if not results:
-        for chunk in doc.noun_chunks:
-            if chunk.root.pos_ != 'PRON':
-                vs = analyzer.polarity_scores(chunk.sent.text)
-                # Only add if the sentiment is not neutral
-                if vs['compound'] != 0:
-                    sentiment = get_sentiment_label(vs['compound'])
-                    results.append({
-                        "aspect": chunk.text.lower(), 
-                        "opinion": "N/A",
-                        "context": chunk.sent.text,
-                        "sentiment": sentiment, 
-                        "score": vs['compound']
-                    })
+        sentence_text = doc.text
+        vs = analyzer.polarity_scores(sentence_text)
+        
+        if vs['compound'] != 0:
+            sentiment = get_sentiment_label(vs['compound'])
+            main_aspect = "general"
+            for chunk in doc.noun_chunks:
+                if chunk.root.dep_ in ('nsubj', 'dobj'):
+                    main_aspect = chunk.text.lower()
+                    break 
+            
+            results.append({
+                "aspect": main_aspect, 
+                "opinion": "N/A",
+                "context": sentence_text,
+                "sentiment": sentiment, 
+                "score": vs['compound']
+            })
 
-    # A final step to remove duplicates that might have slipped through
+    # Final step to remove any exact duplicates
     final_results = [dict(t) for t in {tuple(d.items()) for d in results}]
     return final_results
 

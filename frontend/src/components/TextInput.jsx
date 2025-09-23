@@ -52,7 +52,7 @@ export default function TextInput() {
       {/* Main Dashboard Container */}
       <div className="relative z-10">
         <header className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-1">Text Analysis Dashboard</h1>
+          <h1 className="text-4xl font-bold text-gray-900 mb-1">Text Analysis</h1>
           <p className="text-gray-600">Enter a single review for sentiment analysis.</p>
         </header>
 
