@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Type, Send, CheckCircle, AlertTriangle } from 'lucide-react';
 
 // API endpoint for the single review functionality
-const SINGLE_REVIEW_API_ENDPOINT = 'http://localhost:5000/work/single';
+const SINGLE_REVIEW_API_ENDPOINT = 'http://localhost:8080/work/single';
 
 export default function TextInput() {
   const [textInput, setTextInput] = useState('');

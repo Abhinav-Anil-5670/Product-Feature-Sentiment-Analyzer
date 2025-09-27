@@ -44,7 +44,7 @@ export default function FileUpload() {
     formData.append('review_column', reviewColumn);
 
     try {
-      const response = await fetch('http://localhost:5000/work/csv', {
+      const response = await fetch('http://localhost:8080/work/csv', {
         method: 'POST',
         body: formData,
       });

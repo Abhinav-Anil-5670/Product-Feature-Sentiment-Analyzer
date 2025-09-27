@@ -4,6 +4,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from datetime import datetime
 from analyze import *
+from scraper import scrape_url
 
 app = Flask(__name__)
 CORS(app, resources={r"/work/*": {"origins": "*"}})
@@ -65,6 +66,39 @@ def work_csv():
             return f"An error occurred during processing: {e}", 500
     else:
         return "Invalid file type. Please upload a .csv file.", 400
+    
+@app.route("/work/link", methods=['POST'])
+def work_link():
+    try:
+        url = request.form['url']
+        if not url.strip():
+            return jsonify({"error": "URL cannot be empty."}), 400
+    except KeyError:
+        return jsonify({"error": "Missing 'url' field in form data."}), 400
+
+    try:
+        # Step 1: Call the scraper function. It will save the raw scraped data
+        # into the 'uploads' folder to keep things organized.
+        scraped_csv_path = scrape_url(url, app.config['UPLOAD_FOLDER'])
+
+        if scraped_csv_path is None:
+            return jsonify({"error": "Failed to scrape reviews from the provided URL. The page might be protected or have no reviews."}), 500
+            
+        # Step 2: Process the scraped CSV file using your existing function.
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"processed_link_{timestamp}.csv"
+        processed_output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+        
+        # The scraper creates a column named "Review Text". We pass this to the processor.
+        process_dataset(scraped_csv_path, processed_output_path, review_column_name='Review')
+        
+        # Step 3: Send the final, processed file back to the user.
+        return send_file(processed_output_path, as_attachment=True, download_name=output_filename)
+
+    except Exception as e:
+        print(f"An error occurred during the link processing workflow: {e}")
+        return jsonify({"error": "An internal server error occurred during processing."}), 500
+
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=8080)
