@@ -89,7 +89,7 @@ def work_link():
         output_filename = f"processed_link_{timestamp}.csv"
         processed_output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
         
-        # The scraper creates a column named "Review Text". We pass this to the processor.
+        # The scraper creates a column named "Review".
         process_dataset(scraped_csv_path, processed_output_path, review_column_name='Review')
         
         # Step 3: Send the final, processed file back to the user.
